@@ -6,30 +6,35 @@ on:
 jobs:
   persistent-rdp:
     runs-on: self-hosted
-    timeout-minutes: 0  # No timeout
+    timeout-minutes: 0  # Infinite runtime
 
     steps:
       - name: Enable RDP and Configure Firewall
         run: |
+          Write-Host "🔧 Enabling RDP and configuring firewall..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" > $null 2>&1
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService
 
       - name: Create RDP User
         run: |
+          Write-Host "👤 Creating RDP user..."
           $chars = ([char[]](33..126) | Where-Object {$_ -match '\w|\W'})
           $password = -join (Get-Random -InputObject $chars -Count 16)
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          if (-not (Get-LocalUser -Name "RDP")) {
+              New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+              Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          }
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
 
       - name: Install and Connect Tailscale
         run: |
+          Write-Host "🌐 Installing and connecting Tailscale..."
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $path = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $url -OutFile $path
@@ -39,16 +44,22 @@ jobs:
 
       - name: Show RDP Info
         run: |
+          Write-Host "📡 Fetching Tailscale IP..."
           $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          if (-not $tsIP) {
+              Write-Error "❌ Tailscale IP not assigned. Exiting."
+              exit 1
+          }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "`n=== ✅ RDP ACCESS ==="
           Write-Host "Address: $tsIP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
+          Write-Host "======================`n"
 
       - name: Keep Alive Forever
         run: |
+          Write-Host "🟢 RDP session active. Waiting indefinitely..."
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Manual termination required"
               Start-Sleep -Seconds 300
